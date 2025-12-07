@@ -6,8 +6,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/project"
 
-echo "Installing npm dependencies..."
-npm install --production
+if command -v npm >/dev/null 2>&1; then
+	echo "Installing npm dependencies..."
+	npm install --production
+else
+	echo "npm not found in PATH — assuming dependencies are already installed or build step handled by platform"
+fi
 
 echo "Starting server..."
-npm start
+if command -v node >/dev/null 2>&1; then
+	node server.js
+else
+	echo "node not found in PATH — cannot start server"
+	exit 1
+fi
