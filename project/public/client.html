@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Imposter — Online</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;background:#0b1220;color:#e6eef8;padding:18px}
+.card{background:#0f1724;padding:12px;border-radius:8px;margin-bottom:10px}
+button,input{padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+.player{padding:8px;background:#071022;margin:6px 0;border-radius:6px}
+.small{font-size:13px;color:#9aa6bf}
+</style>
+</head>
+<body>
+<h2>Imposter — Online (Lobby & Rollen)</h2>
+<div class="card" id="welcome">
+  Name: <input id="nameInput" placeholder="Dein Name" />
+  <button id="createBtn">Lobby erstellen</button>
+  <br/><br/>
+  Raumcode beitreten: <input id="joinCode" placeholder="AAAAAA" style="width:120px" />
+  <button id="joinBtn">Beitreten</button>
+  <div id="lobbyActions" style="margin-top:8px"></div>
+</div>
+
+<div class="card" id="lobby" style="display:none">
+  <div><strong>Raum:</strong> <span id="roomCode"></span> <span class="small">(Host: <span id="hostName"></span>)</span></div>
+  <div style="margin-top:8px"><strong>Spieler</strong></div>
+  <div id="playersList"></div>
+  <div style="margin-top:8px" id="hostControls" style="display:none">
+    Imposter: <input id="imposterCount" type="number" value="4" min="1" max="6" />
+    <button id="startGameBtn">Spiel starten</button>
+  </div>
+</div>
+
+<div class="card" id="game" style="display:none">
+  <div><strong>Deine Rolle:</strong> <span id="myRole"></span></div>
+  <div class="small" id="roleNote"></div>
+  <div style="margin-top:8px"><strong>Aktionen</strong></div>
+  <div id="actions"></div>
+  <div style="margin-top:10px"><button id="reportBtn">Leiche melden (Report)</button></div>
+  <div style="margin-top:10px"><strong>Spielerstatus</strong><div id="statusPlayers"></div></div>
+  <div style="margin-top:8px"><strong>Abstimmung</strong><div id="voteArea"></div></div>
+  <div style="margin-top:8px"><div id="log"></div></div>
+</div>
+
+<script>
+let ws = null; let myUid=null; let room=null; let myRole=null; let seerUsed=false;
+function log(msg){ const el=document.getElementById('log'); el.innerHTML = `<div class="small">${new Date().toLocaleTimeString()} — ${msg}</div>` + el.innerHTML; }
+
+function connect(){ ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host );
+  ws.onopen = ()=>{ console.log('connected'); }
+  ws.onmessage = e => { const d = JSON.parse(e.data); handle(d); }
+}
+connect();
+
+function handle(d){
+  if(d.type === 'connected'){ myUid = d.uid; }
+  if(d.type === 'lobbyCreated'){ document.getElementById('lobby').style.display='block'; document.getElementById('welcome').style.display='none'; }
+  if(d.type === 'lobbyUpdate'){ room = d.room; renderLobby(); }
+  if(d.type === 'gameStarted'){ room = d.room; document.getElementById('lobby').style.display='none'; document.getElementById('game').style.display='block'; renderPlayers(room.players); }
+  if(d.type === 'roleAssigned'){ myRole = d.role; document.getElementById('myRole').innerText = myRole; if(myRole==='Detektiv') document.getElementById('roleNote').innerText='Du bist Detektiv — du erhältst Hinweise, aber keine direkten Namen.'; if(myRole==='Seherin') document.getElementById('roleNote').innerText='Du bist Seherin — du kannst EINMAL die Rolle einer Person aufdecken.'; }
+  if(d.type === 'playerKilled'){ renderPlayers(d.players); log('Ein Spieler wurde getötet.'); }
+  if(d.type === 'reportCalled'){ openVoting(); log('Report: Abstimmung gestartet'); }
+  if(d.type === 'detectiveHint'){ alert('DETEKTIV-HINWEIS:\n' + d.hint.map(h=>h.name).join('\n')); }
+  if(d.type === 'seerResult'){ alert('Seherin: ' + d.role); seerUsed=true; renderActions(); }
+  if(d.type === 'voteUpdate'){ document.getElementById('voteArea').innerText = 'Abstimmungs-Stimmen: ' + d.votesCount + ' / ' + d.total; }
+  if(d.type === 'voteResult'){ if(d.executed){ alert('Ausgeführt: ' + d.executed); renderPlayers(d.players); } else { alert('Abstimmung ungültig oder unentschieden.'); } }
+  if(d.type === 'lobbyUpdate'){ room = d.room; renderLobby(); }
+}
+
+// UI handlers
+document.getElementById('createBtn').onclick = ()=>{
+  const name = document.getElementById('nameInput').value || 'Host';
+  ws.send(JSON.stringify({ type:'createLobby', name }));
+};
+
+document.getElementById('joinBtn').onclick = ()=>{
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  const name = document.getElementById('nameInput').value || 'Spieler';
+  ws.send(JSON.stringify({ type:'joinLobby', code, name }));
+  document.getElementById('lobby').style.display='block'; document.getElementById('welcome').style.display='none';
+};
+
+function renderLobby(){ if(!room) return; document.getElementById('roomCode').innerText = room.code; document.getElementById('hostName').innerText = room.hostUid; const list = document.getElementById('playersList'); list.innerHTML=''; room.players.forEach(p=>{ const d=document.createElement('div'); d.className='player'; d.innerText = p.name; list.appendChild(d); });
+  // host controls
+  if(room.hostUid === myUid){ document.getElementById('hostControls').style.display='block'; } else document.getElementById('hostControls').style.display='none'; }
+
+document.getElementById('startGameBtn').onclick = ()=>{ ws.send(JSON.stringify({ type:'startGame' })); }
+
+function renderPlayers(players){ const el = document.getElementById('statusPlayers'); el.innerHTML=''; players.forEach(p=>{ const d = document.createElement('div'); d.className='player'; d.innerText = p.name + ' — ' + (p.alive?'Lebt':'Tot'); d.dataset.uid = p.uid; d.onclick = ()=>{ if(myRole==='Seherin' && !seerUsed && p.uid !== myUid){ if(confirm('Seherin: Rolle von '+p.name+' überprüfen?')){ ws.send(JSON.stringify({ type:'seerCheck', target: p.uid })); } } else if(myRole==='Imposter' && p.alive && p.uid!==myUid){ if(confirm('Imposter: Töte '+p.name+'?')) ws.send(JSON.stringify({ type:'kill', target: p.uid })); } else { /* no-op */ } }; el.appendChild(d); }); renderActions(); }
+
+function renderActions(){ const a = document.getElementById('actions'); a.innerHTML=''; if(myRole==='Seherin'){ const btn = document.createElement('div'); btn.innerText = seerUsed? 'Seherin (verbraucht)':'Seherin: Tippe auf einen Spieler in der Liste, um Rolle aufzudecken.'; a.appendChild(btn); }
+  if(myRole==='Imposter'){ const note = document.createElement('div'); note.innerText='Imposter: Tippe auf Spieler zum Töten.'; a.appendChild(note); }
+  if(myRole==='Detektiv'){ const note = document.createElement('div'); note.innerText='Detektiv: Du bekommst Hinweise nachdem ein Report gemacht wird.'; a.appendChild(note); }
+}
+
+document.getElementById('reportBtn').onclick = ()=>{ if(confirm('Leiche melden? (Reporter drücken)')) ws.send(JSON.stringify({ type:'report' })); }
+
+function openVoting(){ // simple vote UI
+  const area = document.getElementById('voteArea'); area.innerHTML=''; room.players.forEach(p=>{ if(p.alive){ const b = document.createElement('button'); b.innerText = 'Stimme für ' + p.name; b.onclick = ()=>{ ws.send(JSON.stringify({ type:'vote', target: p.uid })); log('Du stimmst für ' + p.name); }; area.appendChild(b); } }); if(room.hostUid===myUid){ const finish = document.createElement('button'); finish.innerText='Abstimmung beenden'; finish.onclick= ()=>{ ws.send(JSON.stringify({ type:'finishVote' })); }; area.appendChild(finish); } }
+
+</script>
+</body>
+</html>
